@@ -493,7 +493,7 @@ def main():
             display_data_summary(df)
                         # Show detected services and distributors
             services = extract_unique_values(df, ["service", "services"])
-            distributors = extract_unique_values(df, ["distributor", "distributors", "distributor a", "distributor b"])
+            distributors = extract_unique_values(df, [col for col in df.columns if "distributor" in col.lower()])
             
             if services or distributors:
                 col1, col2 = st.columns(2)
