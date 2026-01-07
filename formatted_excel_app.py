@@ -154,8 +154,15 @@ def is_rate_column(col_name):
 
 
 def format_column_name(col_name):
-    """Format column name: remove underscores and capitalize."""
-    return str(col_name).replace('_', ' ').title()
+    """Format column name: remove underscores, capitalize, and hyphenate compound words."""
+    formatted = str(col_name).replace('_', ' ').title()
+    # Convert "Sign Ups" -> "Sign-ups", "Log Ins" -> "Log-ins", etc.
+    compound_words = ['Sign Ups', 'Ad Tier']
+    for word in compound_words:
+        if word in formatted:
+            hyphenated = word.split()[0] + '-' + word.split()[1].lower()
+            formatted = formatted.replace(word, hyphenated)
+    return formatted
 
 
 def format_date_for_display(value):
@@ -484,12 +491,7 @@ def main():
             df_transformed = transform_dataframe(df)
             display_data_preview(df, df_transformed)
             display_data_summary(df)
-            
-            # Footnotes selection section
-            st.divider()
-            st.subheader("📝 Footnotes Selection (for cell B4)")
-            
-            # Show detected services and distributors
+                        # Show detected services and distributors
             services = extract_unique_values(df, ["service", "services"])
             distributors = extract_unique_values(df, ["distributor", "distributors", "distributor a", "distributor b"])
             
@@ -501,6 +503,12 @@ def main():
                 with col2:
                     if distributors:
                         st.info(f"**Detected Distributors:** {distributors}")
+            
+            # Footnotes selection section
+            st.divider()
+            st.subheader("📝 Footnotes Selection (for cell B4)")
+            
+
             
             auto_detected = st.session_state.auto_footnotes
             if auto_detected:
