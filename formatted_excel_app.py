@@ -91,19 +91,30 @@ METRIC_KEYWORDS = {
 # HELPER FUNCTIONS
 # =============================================================================
 
-def try_parse_number(value):
-    """Attempt to convert a value to a number."""
+def try_parse_number(value, preserve_percent=False):
+    """Attempt to convert a value to a number.
+    
+    Args:
+        value: The value to parse
+        preserve_percent: If True, returns (number, is_percent) tuple
+    """
     if pd.isna(value):
-        return None
+        return (None, False) if preserve_percent else None
     if isinstance(value, (int, float)):
-        return value
+        return (value, False) if preserve_percent else value
     if isinstance(value, str):
-        cleaned = value.strip().replace(',', '').replace('$', '').replace('%', '')
+        stripped = value.strip()
+        is_percent = stripped.endswith('%')
+        cleaned = stripped.replace(',', '').replace('$', '').replace('%', '')
         try:
-            return float(cleaned)
+            num = float(cleaned)
+            # If it was already a percentage string (e.g., "9.42%"), convert to decimal
+            if is_percent:
+                num = num / 100
+            return (num, is_percent) if preserve_percent else num
         except ValueError:
-            return None
-    return None
+            return (None, False) if preserve_percent else None
+    return (None, False) if preserve_percent else None
 
 
 def try_parse_date(value):
@@ -155,11 +166,13 @@ def format_date_for_display(value):
 
 def format_number_for_display(value, is_rate=False):
     """Format a number for display."""
-    num = try_parse_number(value)
+    result = try_parse_number(value, preserve_percent=True)
+    num, was_percent = result if result else (None, False)
     if num is None:
         return str(value) if pd.notna(value) else ""
-    if is_rate:
-        return f"{num * 100:.0f}%" if abs(num) < 1 else f"{num:.1f}%"
+    if is_rate or was_percent:
+        # num is already in decimal form (e.g., 0.0942 for 9.42%)
+        return f"{num * 100:.2f}%"
     return f"{int(num):,}" if num == int(num) else f"{num:,.0f}"
 
 
@@ -311,15 +324,22 @@ def write_to_template(df, template_path, data_pull_name="", selected_footnotes=N
         numeric_cols = []
         for col in df_converted.columns:
             if col not in date_cols:
-                num_test = df_converted[col].apply(try_parse_number)
+                num_test = df_converted[col].apply(lambda x: try_parse_number(x, preserve_percent=True)[0] if try_parse_number(x, preserve_percent=True) else None)
                 if num_test.notna().sum() > len(df_converted[col].dropna()) * 0.5:
                     numeric_cols.append(col)
         
-        # Write column headers
+        # Track which columns should be right-aligned (numeric/rate columns)
+        right_aligned_cols = set(rate_cols) | set(numeric_cols)
+        
+        # Write column headers with alignment matching data alignment
         for col_idx, col_name in enumerate(df.columns):
             cell = ws.cell(row=DATA_START_ROW, column=DATA_START_COL + col_idx)
             cell.value = format_column_name(col_name)
-            cell.alignment = left_align
+            # Right-align headers for numeric/rate columns
+            if col_name in right_aligned_cols:
+                cell.alignment = right_align
+            else:
+                cell.alignment = left_align
         
         # Write data rows
         for row_idx, row in enumerate(df_converted.itertuples(index=False), start=1):
@@ -337,19 +357,25 @@ def write_to_template(df, template_path, data_pull_name="", selected_footnotes=N
                     cell.alignment = left_align
                     
                 elif col_name in rate_cols:
-                    num = try_parse_number(value)
+                    result = try_parse_number(value, preserve_percent=True)
+                    num, was_percent = result if result else (None, False)
                     if num is not None:
-                        cell.value = num
-                        cell.number_format = '0%' if abs(num) < 1 else '0.0%'
+                        cell.value = num  # Already in decimal form
+                        cell.number_format = '0.00%'
                     else:
                         cell.value = value if pd.notna(value) else ""
                     cell.alignment = right_align
                     
                 elif col_name in numeric_cols:
-                    num = try_parse_number(value)
+                    result = try_parse_number(value, preserve_percent=True)
+                    num, was_percent = result if result else (None, False)
                     if num is not None:
-                        cell.value = num
-                        cell.number_format = '#,##0'
+                        if was_percent:
+                            cell.value = num  # Already in decimal form
+                            cell.number_format = '0.00%'
+                        else:
+                            cell.value = num
+                            cell.number_format = '#,##0'
                     else:
                         cell.value = value if pd.notna(value) else ""
                     cell.alignment = right_align
@@ -414,9 +440,10 @@ def display_data_summary(df):
 # =============================================================================
 
 def main():
-    st.set_page_config(page_title="Antenna Formatted Excel Builder", page_icon="📊", layout="wide")
-    st.title("📊 Antenna Formatted Excel Builder")
-    st.markdown("Upload or paste data to create a formatted Excel file.")
+    st.set_page_config(page_title="Antenna Formatted Excel Converter", page_icon="📊", layout="wide")
+    st.title("📊 Antenna - Formatted Excel Converter")
+    st.markdown("Transform your regular degular data into an Antenna Style Formatted Excel that even ~ Insights would approve of!")
+    st.markdown("Please send all bugs & enhancement requests to Brooke Kilker")
     
     if 'df' not in st.session_state:
         st.session_state.df = None
@@ -461,6 +488,19 @@ def main():
             # Footnotes selection section
             st.divider()
             st.subheader("📝 Footnotes Selection (for cell B4)")
+            
+            # Show detected services and distributors
+            services = extract_unique_values(df, ["service", "services"])
+            distributors = extract_unique_values(df, ["distributor", "distributors", "distributor a", "distributor b"])
+            
+            if services or distributors:
+                col1, col2 = st.columns(2)
+                with col1:
+                    if services:
+                        st.info(f"**Detected Services:** {services}")
+                with col2:
+                    if distributors:
+                        st.info(f"**Detected Distributors:** {distributors}")
             
             auto_detected = st.session_state.auto_footnotes
             if auto_detected:
