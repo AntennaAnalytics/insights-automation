@@ -308,7 +308,7 @@ def write_to_template(df, template_path, data_pull_name="", selected_footnotes=N
         ws.cell(row=CELL_SERVICES[0], column=CELL_SERVICES[1]).value = extract_unique_values(df, ["service", "services"])
         
         # B3: Distributors
-        ws.cell(row=CELL_DISTRIBUTORS[0], column=CELL_DISTRIBUTORS[1]).value = extract_unique_values(df, ["distributor", "distributors", "distributor a", "distributor b"])
+        ws.cell(row=CELL_DISTRIBUTORS[0], column=CELL_DISTRIBUTORS[1]).value  = extract_unique_values(df, [col for col in df.columns if "distributor" in col.lower()])
         
         # B4: Selected footnotes
         if selected_footnotes:
@@ -502,7 +502,7 @@ def main():
                         st.info(f"**Detected Services:** {services}")
                 with col2:
                     if distributors:
-                        st.info(f"**Detected Distributors:** {distributors}")
+                        st.info(f"**Detected Distributors:** {difstributors}")
             
             # Footnotes selection section
             st.divider()
