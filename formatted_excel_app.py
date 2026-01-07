@@ -450,7 +450,7 @@ def main():
     st.set_page_config(page_title="Antenna Formatted Excel Converter", page_icon="📊", layout="wide")
     st.title("📊 Antenna - Formatted Excel Converter")
     st.markdown("Transform your regular degular data into an Antenna Style Formatted Excel that even ~ Insights would approve of!")
-    st.markdown("Please send all bugs & enhancement requests to Brooke Kilker")
+    st.markdown("Please leave all bugs & enhancement requests in a jira ticket [here](https://antennalive.atlassian.net/browse/DA-6973)")
     
     if 'df' not in st.session_state:
         st.session_state.df = None
