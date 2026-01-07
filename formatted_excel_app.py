@@ -502,7 +502,7 @@ def main():
                         st.info(f"**Detected Services:** {services}")
                 with col2:
                     if distributors:
-                        st.info(f"**Detected Distributors:** {difstributors}")
+                        st.info(f"**Detected Distributors:** {distributors}")
             
             # Footnotes selection section
             st.divider()
