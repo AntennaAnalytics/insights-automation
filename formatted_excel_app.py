@@ -415,7 +415,7 @@ def display_data_summary(df):
 
 def main():
     st.set_page_config(page_title="Antenna Formatted Excel Builder", page_icon="📊", layout="wide")
-    st.title("📊 Formatted Excel Builder")
+    st.title("📊 Antenna Formatted Excel Builder")
     st.markdown("Upload or paste data to create a formatted Excel file.")
     
     if 'df' not in st.session_state:
