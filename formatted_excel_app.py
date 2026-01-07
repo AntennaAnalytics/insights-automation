@@ -160,7 +160,7 @@ def format_column_name(col_name):
     compound_words = ['Sign Ups', 'Ad Tier']
     for word in compound_words:
         if word in formatted:
-            hyphenated = word.split()[0] + '-' + word.split()[1].lower()
+            hyphenated = word.split()[0] + '-' + word.split()[1]
             formatted = formatted.replace(word, hyphenated)
     return formatted
 
