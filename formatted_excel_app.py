@@ -308,7 +308,7 @@ def write_to_template(df, template_path, data_pull_name="", selected_footnotes=N
         ws.cell(row=CELL_SERVICES[0], column=CELL_SERVICES[1]).value = extract_unique_values(df, ["service", "services"])
         
         # B3: Distributors
-        ws.cell(row=CELL_DISTRIBUTORS[0], column=CELL_DISTRIBUTORS[1]).value  = extract_unique_values(df, [col for col in df.columns if "distributor" in col.lower()])
+        ws.cell(row=CELL_DISTRIBUTORS[0], column=CELL_DISTRIBUTORS[1]).value = extract_unique_values(df, [col for col in df.columns if "distributor" in col.lower()])
         
         # B4: Selected footnotes
         if selected_footnotes:
