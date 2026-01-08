@@ -463,8 +463,8 @@ def main():
         
         st.divider()
         st.subheader("📝 Report Details")
-        customer_name = st.text_input("Customer Name *", placeholder="e.g., Acme Corp")
-        data_pull_name = st.text_input("Data Pull Name *", placeholder="e.g., Q4 Sales Report")
+        customer_name = st.text_input("Customer Name *", placeholder="e.g., Netflix")
+        data_pull_name = st.text_input("Data Pull Name *", placeholder="e.g., Montly Subscribers by Plan")
         
         if customer_name and data_pull_name:
             st.caption(f"📁 `Antenna for {customer_name}_{data_pull_name}_{date.today().strftime('%Y%m%d')}.xlsx`")
