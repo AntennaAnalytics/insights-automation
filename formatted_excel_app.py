@@ -3,26 +3,9 @@ Formatted Excel Builder - Streamlit Application
 ================================================
 A tool to upload/paste tabular data and export it into a formatted Excel template.
 
-ENHANCEMENTS ADDED:
--------------------
-- Excel file upload (.xlsx, .xls) with multi-sheet selection
-- Per-sheet column inclusion/exclusion controls
-- Multiple output sheets in a single exported Excel file
-- Sheet name sanitization and validation
-- Cached file reading for performance
-- Step-by-step UI flow
-
-ASSUMPTIONS:
-------------
-1. Each input sheet generates one output sheet (1:1 mapping)
-2. Template formatting is applied to each output sheet independently
-3. Output sheet names default to input sheet names but are editable
-4. Column selection happens after sheet selection
-5. The template structure (rows 1-6 for metadata, row 7+ for data) applies to all output sheets
-
 HOW TO RUN:
 -----------
-1. Install dependencies: pip install streamlit pandas openpyxl xlrd
+1. Install dependencies: pip install streamlit pandas openpyxl
 2. Place your template.xlsx file in the same directory as this script
 3. Run: streamlit run app.py
 """
@@ -31,10 +14,8 @@ import streamlit as st
 import pandas as pd
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment
-from openpyxl.worksheet.worksheet import Worksheet
 from io import BytesIO
 from datetime import date, datetime
-import re
 
 # =============================================================================
 # CONFIGURATION
@@ -107,50 +88,6 @@ METRIC_KEYWORDS = {
 }
 
 # =============================================================================
-# NEW: EXCEL SHEET UTILITIES
-# =============================================================================
-
-def sanitize_sheet_name(name):
-    """Sanitize sheet name for Excel compatibility."""
-    # Remove invalid characters
-    invalid_chars = [':', '\\', '/', '?', '*', '[', ']']
-    sanitized = name
-    for char in invalid_chars:
-        sanitized = sanitized.replace(char, '_')
-    
-    # Truncate to 31 characters (Excel limit)
-    if len(sanitized) > 31:
-        sanitized = sanitized[:31]
-    
-    # Ensure not empty
-    if not sanitized.strip():
-        sanitized = "Sheet1"
-    
-    return sanitized.strip()
-
-
-@st.cache_data(show_spinner=False)
-def load_excel_sheets(_file):
-    """Load all sheet names from an Excel file. Cached for performance."""
-    try:
-        excel_file = pd.ExcelFile(_file)
-        return excel_file.sheet_names, excel_file
-    except Exception as e:
-        st.error(f"Error loading Excel file: {e}")
-        return None, None
-
-
-@st.cache_data(show_spinner=False)
-def read_excel_sheet(_excel_file, sheet_name):
-    """Read a specific sheet from Excel file. Cached for performance."""
-    try:
-        return pd.read_excel(_excel_file, sheet_name=sheet_name)
-    except Exception as e:
-        st.error(f"Error reading sheet '{sheet_name}': {e}")
-        return None
-
-
-# =============================================================================
 # HELPER FUNCTIONS
 # =============================================================================
 
@@ -219,7 +156,7 @@ def is_rate_column(col_name):
 def format_column_name(col_name):
     """Format column name: remove underscores, capitalize, and hyphenate compound words."""
     formatted = str(col_name).replace('_', ' ').title()
-    # Convert "Sign Ups" -> "Sign-ups", "Ad Tier" -> "Ad-Tier", etc.
+    # Convert "Sign Ups" -> "Sign-ups", "Log Ins" -> "Log-ins", etc.
     compound_words = ['Sign Ups', 'Ad Tier']
     for word in compound_words:
         if word in formatted:
@@ -352,158 +289,118 @@ def extract_unique_values(df, column_names):
 
 
 # =============================================================================
-# EXCEL EXPORT - UPDATED FOR MULTI-SHEET
+# EXCEL EXPORT
 # =============================================================================
 
-def write_sheet_to_workbook(ws, df, data_pull_name="", selected_footnotes=None):
-    """Write a single DataFrame to a worksheet with formatting."""
-    left_align = Alignment(horizontal='left')
-    right_align = Alignment(horizontal='right')
-    
-    # B1: Data Pull Name
-    ws.cell(row=CELL_USER_INPUT[0], column=CELL_USER_INPUT[1]).value = data_pull_name
-    
-    # B2: Services
-    ws.cell(row=CELL_SERVICES[0], column=CELL_SERVICES[1]).value = extract_unique_values(df, [col for col in df.columns if "service" in col.lower()])
-    
-    # B3: Distributors
-    ws.cell(row=CELL_DISTRIBUTORS[0], column=CELL_DISTRIBUTORS[1]).value = extract_unique_values(df, [col for col in df.columns if "distributor" in col.lower()])
-    
-    # B4: Selected footnotes
-    if selected_footnotes:
-        footnote_text = "\n\n".join([f"{FOOTNOTES_TABLE[metric]}" for metric in selected_footnotes])
-        cell_b4 = ws.cell(row=CELL_FOOTNOTES[0], column=CELL_FOOTNOTES[1])
-        cell_b4.value = footnote_text
-        cell_b4.alignment = Alignment(wrap_text=True, vertical='top')
-    
-    # B5: Date
-    date_cell = ws.cell(row=CELL_DATE[0], column=CELL_DATE[1])
-    date_cell.value = date.today()
-    date_cell.number_format = 'yyyy-mm-dd'
-    
-    # Convert numbers before writing
-    df_converted = convert_numeric_columns(df)
-    
-    # Identify column types
-    date_cols = [col for col in df.columns if is_date_column(df[col])]
-    rate_cols = [col for col in df.columns if is_rate_column(col)]
-    numeric_cols = []
-    for col in df_converted.columns:
-        if col not in date_cols:
-            num_test = df_converted[col].apply(lambda x: try_parse_number(x, preserve_percent=True)[0] if try_parse_number(x, preserve_percent=True) else None)
-            if num_test.notna().sum() > len(df_converted[col].dropna()) * 0.5:
-                numeric_cols.append(col)
-    
-    # Track which columns should be right-aligned (numeric/rate columns)
-    right_aligned_cols = set(rate_cols) | set(numeric_cols)
-    
-    # Write column headers with alignment matching data alignment
-    for col_idx, col_name in enumerate(df.columns):
-        cell = ws.cell(row=DATA_START_ROW, column=DATA_START_COL + col_idx)
-        cell.value = format_column_name(col_name)
-        # Right-align headers for numeric/rate columns
-        if col_name in right_aligned_cols:
-            cell.alignment = right_align
-        else:
-            cell.alignment = left_align
-    
-    # Write data rows
-    for row_idx, row in enumerate(df_converted.itertuples(index=False), start=1):
-        for col_idx, value in enumerate(row):
-            cell = ws.cell(row=DATA_START_ROW + row_idx, column=DATA_START_COL + col_idx)
-            col_name = df.columns[col_idx]
-            
-            if col_name in date_cols:
-                parsed_date = try_parse_date(value)
-                if parsed_date:
-                    cell.value = parsed_date
-                    cell.number_format = 'MMM-YY'
-                else:
-                    cell.value = value if pd.notna(value) else ""
-                cell.alignment = left_align
-                
-            elif col_name in rate_cols:
-                result = try_parse_number(value, preserve_percent=True)
-                num, was_percent = result if result else (None, False)
-                if num is not None:
-                    cell.value = num  # Already in decimal form
-                    cell.number_format = '0.00%'
-                else:
-                    cell.value = value if pd.notna(value) else ""
+def write_to_template(df, template_path, data_pull_name="", selected_footnotes=None):
+    """Write DataFrame to Excel template."""
+    try:
+        wb = load_workbook(template_path)
+        ws = wb[TARGET_SHEET] if TARGET_SHEET in wb.sheetnames else wb.active
+        
+        left_align = Alignment(horizontal='left')
+        right_align = Alignment(horizontal='right')
+        
+        # B1: Data Pull Name (same as filename component)
+        ws.cell(row=CELL_USER_INPUT[0], column=CELL_USER_INPUT[1]).value = data_pull_name
+        
+        # B2: Services
+        ws.cell(row=CELL_SERVICES[0], column=CELL_SERVICES[1]).value = extract_unique_values(df, [col for col in df.columns if "service" in col.lower()])
+        
+        # B3: Distributors
+        ws.cell(row=CELL_DISTRIBUTORS[0], column=CELL_DISTRIBUTORS[1]).value = extract_unique_values(df, [col for col in df.columns if "distributor" in col.lower()])
+        
+        # B4: Selected footnotes
+        if selected_footnotes:
+            footnote_text = "\n\n".join([f"{FOOTNOTES_TABLE[metric]}" for metric in selected_footnotes])
+            cell_b4 = ws.cell(row=CELL_FOOTNOTES[0], column=CELL_FOOTNOTES[1])
+            cell_b4.value = footnote_text
+            cell_b4.alignment = Alignment(wrap_text=True, vertical='top')
+        
+        # B5: Date
+        date_cell = ws.cell(row=CELL_DATE[0], column=CELL_DATE[1])
+        date_cell.value = date.today()
+        date_cell.number_format = 'yyyy-mm-dd'
+        
+        # Convert numbers before writing
+        df_converted = convert_numeric_columns(df)
+        
+        # Identify column types
+        date_cols = [col for col in df.columns if is_date_column(df[col])]
+        rate_cols = [col for col in df.columns if is_rate_column(col)]
+        numeric_cols = []
+        for col in df_converted.columns:
+            if col not in date_cols:
+                num_test = df_converted[col].apply(lambda x: try_parse_number(x, preserve_percent=True)[0] if try_parse_number(x, preserve_percent=True) else None)
+                if num_test.notna().sum() > len(df_converted[col].dropna()) * 0.5:
+                    numeric_cols.append(col)
+        
+        # Track which columns should be right-aligned (numeric/rate columns)
+        right_aligned_cols = set(rate_cols) | set(numeric_cols)
+        
+        # Write column headers with alignment matching data alignment
+        for col_idx, col_name in enumerate(df.columns):
+            cell = ws.cell(row=DATA_START_ROW, column=DATA_START_COL + col_idx)
+            cell.value = format_column_name(col_name)
+            # Right-align headers for numeric/rate columns
+            if col_name in right_aligned_cols:
                 cell.alignment = right_align
+            else:
+                cell.alignment = left_align
+        
+        # Write data rows
+        for row_idx, row in enumerate(df_converted.itertuples(index=False), start=1):
+            for col_idx, value in enumerate(row):
+                cell = ws.cell(row=DATA_START_ROW + row_idx, column=DATA_START_COL + col_idx)
+                col_name = df.columns[col_idx]
                 
-            elif col_name in numeric_cols:
-                result = try_parse_number(value, preserve_percent=True)
-                num, was_percent = result if result else (None, False)
-                if num is not None:
-                    if was_percent:
+                if col_name in date_cols:
+                    parsed_date = try_parse_date(value)
+                    if parsed_date:
+                        cell.value = parsed_date
+                        cell.number_format = 'MMM-YY'
+                    else:
+                        cell.value = value if pd.notna(value) else ""
+                    cell.alignment = left_align
+                    
+                elif col_name in rate_cols:
+                    result = try_parse_number(value, preserve_percent=True)
+                    num, was_percent = result if result else (None, False)
+                    if num is not None:
                         cell.value = num  # Already in decimal form
                         cell.number_format = '0.00%'
                     else:
-                        cell.value = num
-                        cell.number_format = '#,##0'
+                        cell.value = value if pd.notna(value) else ""
+                    cell.alignment = right_align
+                    
+                elif col_name in numeric_cols:
+                    result = try_parse_number(value, preserve_percent=True)
+                    num, was_percent = result if result else (None, False)
+                    if num is not None:
+                        if was_percent:
+                            cell.value = num  # Already in decimal form
+                            cell.number_format = '0.00%'
+                        else:
+                            cell.value = num
+                            cell.number_format = '#,##0'
+                    else:
+                        cell.value = value if pd.notna(value) else ""
+                    cell.alignment = right_align
+                    
                 else:
                     cell.value = value if pd.notna(value) else ""
-                cell.alignment = right_align
-                
-            else:
-                cell.value = value if pd.notna(value) else ""
-                cell.alignment = left_align
-    
-    # Delete columns marked "Delete" (scan from right to left to preserve indices)
-    cols_to_delete = []
-    for col_idx in range(1, ws.max_column + 1):
-        header_value = ws.cell(row=DATA_START_ROW, column=col_idx).value
-        if header_value and str(header_value).strip().lower() == "delete":
-            cols_to_delete.append(col_idx)
-    
-    # Delete from right to left to avoid index shifting issues
-    for col_idx in reversed(cols_to_delete):
-        ws.delete_cols(col_idx)
-
-
-def write_multiple_sheets_to_template(datasets_config, template_path):
-    """
-    Write multiple DataFrames to Excel template with multiple output sheets.
-    
-    Args:
-        datasets_config: List of dicts with keys:
-            - 'df': DataFrame to write
-            - 'sheet_name': Output sheet name
-            - 'data_pull_name': Data pull name for this sheet
-            - 'footnotes': List of selected footnotes
-        template_path: Path to the Excel template
-    
-    Returns:
-        BytesIO buffer containing the Excel file
-    """
-    try:
-        wb = load_workbook(template_path)
+                    cell.alignment = left_align
         
-        for idx, config in enumerate(datasets_config):
-            df = config['df']
-            sheet_name = sanitize_sheet_name(config['sheet_name'])
-            data_pull_name = config.get('data_pull_name', '')
-            footnotes = config.get('footnotes', [])
-            
-            # Create or get the worksheet
-            if sheet_name in wb.sheetnames:
-                ws = wb[sheet_name]
-            else:
-                # Copy template sheet structure if available, otherwise create new
-                if TARGET_SHEET in wb.sheetnames and idx == 0:
-                    ws = wb[TARGET_SHEET]
-                    ws.title = sheet_name
-                else:
-                    ws = wb.create_sheet(title=sheet_name)
-            
-            # Write data to the worksheet
-            write_sheet_to_workbook(ws, df, data_pull_name, footnotes)
+        # Delete columns marked "Delete" (scan from right to left to preserve indices)
+        cols_to_delete = []
+        for col_idx in range(1, ws.max_column + 1):
+            header_value = ws.cell(row=DATA_START_ROW, column=col_idx).value
+            if header_value and str(header_value).strip().lower() == "delete":
+                cols_to_delete.append(col_idx)
         
-        # Remove default template sheet if it exists and wasn't used
-        if TARGET_SHEET in wb.sheetnames and len(datasets_config) > 0:
-            if datasets_config[0]['sheet_name'] != TARGET_SHEET:
-                del wb[TARGET_SHEET]
+        # Delete from right to left to avoid index shifting issues
+        for col_idx in reversed(cols_to_delete):
+            ws.delete_cols(col_idx)
         
         buffer = BytesIO()
         wb.save(buffer)
@@ -522,75 +419,27 @@ def write_multiple_sheets_to_template(datasets_config, template_path):
 # UI COMPONENTS
 # =============================================================================
 
-def display_data_preview(df, df_transformed, sheet_name="", max_rows=10):
+def display_data_preview(df, df_transformed, max_rows=10):
     """Display data preview."""
-    title = f"📋 Data Preview: {sheet_name}" if sheet_name else "📋 Data Preview"
-    st.subheader(title)
+    st.subheader("📋 Data Preview")
     st.dataframe(df_transformed.head(max_rows), use_container_width=True)
     if len(df) > max_rows:
         st.caption(f"Showing first {max_rows} of {len(df)} rows")
+    
+    with st.expander("🔄 Column Transformations"):
+        st.dataframe(pd.DataFrame({
+            'Original': df.columns.tolist(),
+            'Transformed': df_transformed.columns.tolist()
+        }), use_container_width=True)
 
 
 def display_data_summary(df):
     """Display data summary."""
+    st.subheader("📊 Data Summary")
     c1, c2, c3 = st.columns(3)
     c1.metric("Rows", len(df))
     c2.metric("Columns", len(df.columns))
     c3.metric("Cells", len(df) * len(df.columns))
-
-
-# =============================================================================
-# NEW: COLUMN SELECTION UI
-# =============================================================================
-
-def render_column_selector(sheet_name, df, key_prefix):
-    """Render column inclusion/exclusion controls for a sheet."""
-    st.markdown(f"#### 🎯 Column Selection: {sheet_name}")
-    
-    all_columns = df.columns.tolist()
-    
-    col1, col2 = st.columns([1, 2])
-    
-    with col1:
-        selection_mode = st.radio(
-            "Selection mode:",
-            ["Include columns", "Exclude columns"],
-            key=f"{key_prefix}_mode",
-            help="Choose whether to select columns to include or exclude"
-        )
-    
-    with col2:
-        if selection_mode == "Include columns":
-            selected_columns = st.multiselect(
-                "Select columns to include:",
-                options=all_columns,
-                default=all_columns,
-                key=f"{key_prefix}_include",
-                help="Only selected columns will be included in the output"
-            )
-            
-            if not selected_columns:
-                st.warning("⚠️ No columns selected! Please select at least one column.")
-                return None
-            
-            return selected_columns
-        
-        else:  # Exclude mode
-            excluded_columns = st.multiselect(
-                "Select columns to exclude:",
-                options=all_columns,
-                default=[],
-                key=f"{key_prefix}_exclude",
-                help="Selected columns will be excluded from the output"
-            )
-            
-            included_columns = [col for col in all_columns if col not in excluded_columns]
-            
-            if not included_columns:
-                st.warning("⚠️ All columns excluded! Please include at least one column.")
-                return None
-            
-            return included_columns
 
 
 # =============================================================================
@@ -603,228 +452,108 @@ def main():
     st.markdown("Transform your regular degular data into an Antenna Style Formatted Excel that even ~ Insights would approve of!")
     st.markdown("Please leave all bugs & enhancement requests in a comment on the jira ticket [here](https://antennalive.atlassian.net/browse/DA-6973)")
     
-    # Initialize session state
-    if 'datasets' not in st.session_state:
-        st.session_state.datasets = {}
+    if 'df' not in st.session_state:
+        st.session_state.df = None
     if 'auto_footnotes' not in st.session_state:
-        st.session_state.auto_footnotes = {}
-    if 'selected_sheets' not in st.session_state:
-        st.session_state.selected_sheets = []
-    if 'excel_file' not in st.session_state:
-        st.session_state.excel_file = None
-    
-    # =============================================================================
-    # SIDEBAR: INPUT OPTIONS
-    # =============================================================================
+        st.session_state.auto_footnotes = []
     
     with st.sidebar:
-        st.header("⚙️ Step 1: Input Options")
-        input_method = st.radio("Input method:", ["Upload CSV", "Upload Excel", "Paste Data"])
-        
-        st.divider()
-        
-        # CSV Upload (original functionality)
-        if input_method == "Upload CSV":
-            uploaded_file = st.file_uploader("Choose CSV", type=['csv'])
-            if uploaded_file:
-                df = load_input(uploaded_file)
-                if df is not None:
-                    st.session_state.datasets = {"CSV Data": df}
-                    st.session_state.auto_footnotes = {"CSV Data": detect_matching_footnotes(df)}
-                    st.session_state.selected_sheets = ["CSV Data"]
-        
-        # NEW: Excel Upload with sheet selection
-        elif input_method == "Upload Excel":
-            uploaded_file = st.file_uploader("Choose Excel file", type=['xlsx', 'xls'])
-            if uploaded_file:
-                sheet_names, excel_file = load_excel_sheets(uploaded_file)
-                
-                if sheet_names:
-                    st.session_state.excel_file = excel_file
-                    st.success(f"✅ Found {len(sheet_names)} sheet(s)")
-                    
-                    selected_sheets = st.multiselect(
-                        "Select sheet(s) to process:",
-                        options=sheet_names,
-                        default=sheet_names[:1] if sheet_names else [],
-                        help="Select one or more sheets to include in the output"
-                    )
-                    
-                    if selected_sheets:
-                        st.session_state.selected_sheets = selected_sheets
-                        
-                        # Load selected sheets
-                        for sheet_name in selected_sheets:
-                            if sheet_name not in st.session_state.datasets:
-                                df = read_excel_sheet(excel_file, sheet_name)
-                                if df is not None:
-                                    st.session_state.datasets[sheet_name] = df
-                                    st.session_state.auto_footnotes[sheet_name] = detect_matching_footnotes(df)
-        
-        # Paste Data (original functionality)
-        else:
-            pasted_data = st.text_area("Paste data:", height=200)
-            if st.button("Parse Data", type="primary") and pasted_data:
-                df = parse_pasted_data(pasted_data)
-                if df is not None:
-                    st.session_state.datasets = {"Pasted Data": df}
-                    st.session_state.auto_footnotes = {"Pasted Data": detect_matching_footnotes(df)}
-                    st.session_state.selected_sheets = ["Pasted Data"]
+        st.header("⚙️ Input Options")
+        input_method = st.radio("Input method:", ["Upload CSV", "Paste Data"])
         
         st.divider()
         st.subheader("📝 Report Details")
         customer_name = st.text_input("Customer Name *", placeholder="e.g., Netflix")
-        data_pull_name = st.text_input("Data Pull Name *", placeholder="e.g., Monthly Subscribers by Plan")
+        data_pull_name = st.text_input("Data Pull Name *", placeholder="e.g., Montly Subscribers by Plan")
         
         if customer_name and data_pull_name:
             st.caption(f"📁 `Antenna for {customer_name}_{data_pull_name}_{date.today().strftime('%Y%m%d')}.xlsx`")
+        
+        st.divider()
+        
+        if input_method == "Upload CSV":
+            uploaded_file = st.file_uploader("Choose CSV", type=['csv'])
+            if uploaded_file:
+                st.session_state.df = load_input(uploaded_file)
+                if st.session_state.df is not None:
+                    st.session_state.auto_footnotes = detect_matching_footnotes(st.session_state.df)
+        else:
+            pasted_data = st.text_area("Paste data:", height=200)
+            if st.button("Parse Data", type="primary") and pasted_data:
+                st.session_state.df = parse_pasted_data(pasted_data)
+                if st.session_state.df is not None:
+                    st.session_state.auto_footnotes = detect_matching_footnotes(st.session_state.df)
     
-    # =============================================================================
-    # MAIN AREA: DATA PROCESSING AND OUTPUT
-    # =============================================================================
-    
-    if st.session_state.datasets:
-        st.header("📊 Step 2: Review & Configure Data")
-        
-        # Track filtered datasets and their configurations
-        filtered_datasets = {}
-        output_configs = []
-        
-        # Process each selected sheet
-        for idx, sheet_name in enumerate(st.session_state.selected_sheets):
-            if sheet_name not in st.session_state.datasets:
-                continue
-                
-            df_original = st.session_state.datasets[sheet_name]
+    df = st.session_state.df
+    if df is not None:
+        is_valid, error_msg = validate_dataframe(df)
+        if is_valid:
+            df_transformed = transform_dataframe(df)
+            display_data_preview(df, df_transformed)
+            display_data_summary(df)
+                        # Show detected services and distributors
+            services = extract_unique_values(df, [col for col in df.columns if "service" in col.lower()])
+            distributors = extract_unique_values(df, [col for col in df.columns if "distributor" in col.lower()])
             
-            # Validate the dataframe
-            is_valid, error_msg = validate_dataframe(df_original)
-            if not is_valid:
-                st.error(f"❌ Error in sheet '{sheet_name}': {error_msg}")
-                continue
+            if services or distributors:
+                col1, col2 = st.columns(2)
+                with col1:
+                    if services:
+                        st.info(f"**Detected Services:** {services}")
+                with col2:
+                    if distributors:
+                        st.info(f"**Detected Distributors:** {distributors}")
             
-            # Create expandable section for each sheet
-            with st.expander(f"📄 Sheet: **{sheet_name}**", expanded=len(st.session_state.selected_sheets) == 1):
-                
-                # Column selection UI
-                selected_columns = render_column_selector(sheet_name, df_original, f"sheet_{idx}")
-                
-                if selected_columns is None:
-                    continue
-                
-                # Filter dataframe to selected columns
-                df_filtered = df_original[selected_columns].copy()
-                
-                # Transform for display
-                df_transformed = transform_dataframe(df_filtered)
-                
-                # Display preview and summary
-                display_data_preview(df_filtered, df_transformed, sheet_name)
-                display_data_summary(df_filtered)
-                
-                # Show detected services and distributors
-                services = extract_unique_values(df_filtered, [col for col in df_filtered.columns if "service" in col.lower()])
-                distributors = extract_unique_values(df_filtered, [col for col in df_filtered.columns if "distributor" in col.lower()])
-                
-                if services or distributors:
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        if services:
-                            st.info(f"**Detected Services:** {services}")
-                    with col2:
-                        if distributors:
-                            st.info(f"**Detected Distributors:** {distributors}")
-                
-                st.divider()
-                
-                # Output sheet configuration
-                st.markdown("#### 📝 Output Sheet Configuration")
-                col_a, col_b = st.columns(2)
-                
-                with col_a:
-                    output_sheet_name = st.text_input(
-                        "Output sheet name:",
-                        value=sheet_name,
-                        key=f"output_name_{idx}",
-                        help="Name for this sheet in the output Excel file"
-                    )
-                
-                with col_b:
-                    sheet_data_pull_name = st.text_input(
-                        "Data pull name (for this sheet):",
-                        value=data_pull_name if 'data_pull_name' in locals() else "",
-                        key=f"data_pull_{idx}",
-                        help="Will be inserted into cell B1"
-                    )
-                
-                # Footnotes selection for this sheet
-                st.markdown("#### 📝 Footnotes Selection")
-                
-                auto_detected = st.session_state.auto_footnotes.get(sheet_name, [])
-                if auto_detected:
-                    st.success(f"🔍 Auto-detected {len(auto_detected)} matching footnote(s)")
-                
-                selected_footnotes = st.multiselect(
-                    "Select footnotes to include:",
-                    options=list(FOOTNOTES_TABLE.keys()),
-                    default=auto_detected,
-                    key=f"footnotes_{idx}",
-                    help="These footnotes will be inserted into cell B4"
-                )
-                
-                if selected_footnotes:
-                    with st.expander(f"📖 Preview {len(selected_footnotes)} selected footnote(s)"):
-                        for metric in selected_footnotes:
-                            st.markdown(f"**{metric}:** {FOOTNOTES_TABLE[metric]}")
-                            st.markdown("---")
-                
-                # Store configuration
-                filtered_datasets[sheet_name] = df_filtered
-                output_configs.append({
-                    'df': df_filtered,
-                    'sheet_name': output_sheet_name,
-                    'data_pull_name': sheet_data_pull_name,
-                    'footnotes': selected_footnotes
-                })
-        
-        # =============================================================================
-        # GENERATE OUTPUT
-        # =============================================================================
-        
-        if output_configs:
+            # Footnotes selection section
             st.divider()
-            st.header("📥 Step 3: Generate Output")
+            st.subheader("📝 Footnotes Selection (for cell B4)")
             
-            # Summary of what will be generated
-            st.info(f"📊 **Ready to generate:** {len(output_configs)} sheet(s) in one Excel file")
+
             
-            cols = st.columns(len(output_configs))
-            for i, config in enumerate(output_configs):
-                with cols[i]:
-                    st.metric(f"Sheet {i+1}", config['sheet_name'])
+            auto_detected = st.session_state.auto_footnotes
+            if auto_detected:
+                st.success(f"🔍 Auto-detected {len(auto_detected)} matching footnote(s) based on your data columns.")
+            
+            # Create multiselect with auto-detected defaults
+            selected_footnotes = st.multiselect(
+                "Select footnotes to include:",
+                options=list(FOOTNOTES_TABLE.keys()),
+                default=auto_detected,
+                help="These footnotes will be inserted into cell B4 of the output file."
+            )
+            
+            # Show preview of selected footnotes
+            if selected_footnotes:
+                with st.expander(f"📖 Preview {len(selected_footnotes)} selected footnote(s)"):
+                    for metric in selected_footnotes:
+                        st.markdown(f"**{metric}:** {FOOTNOTES_TABLE[metric]}")
+                        st.markdown("---")
+            
+            st.divider()
+            st.subheader("📥 Generate Output")
             
             if not customer_name or not data_pull_name:
-                st.warning("⚠️ Enter Customer Name and Data Pull Name in the sidebar to generate.")
+                st.warning("⚠️ Enter Customer Name and Data Pull Name to generate.")
             
-            if st.button("🔄 Generate Multi-Sheet Excel", type="primary", disabled=not (customer_name and data_pull_name)):
-                with st.spinner("Generating multi-sheet Excel file..."):
-                    buffer = write_multiple_sheets_to_template(output_configs, TEMPLATE_PATH)
+            if st.button("🔄 Generate Excel", type="primary", disabled=not (customer_name and data_pull_name)):
+                with st.spinner("Generating..."):
+                    buffer = write_to_template(df, TEMPLATE_PATH, data_pull_name, selected_footnotes)
                     if buffer:
                         st.session_state.excel_buffer = buffer
                         st.session_state.output_filename = f"Antenna for {customer_name}_{data_pull_name}_{date.today().strftime('%Y%m%d')}.xlsx"
-                        st.success(f"✅ Generated {len(output_configs)} sheet(s) successfully!")
+                        st.success("✅ Generated!")
             
             if st.session_state.get('excel_buffer'):
                 st.download_button(
                     f"⬇️ Download: {st.session_state.output_filename}",
                     st.session_state.excel_buffer,
                     st.session_state.output_filename,
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    type="primary"
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
-    
+        else:
+            st.error(f"❌ {error_msg}")
     else:
-        st.info("👈 Upload a CSV/Excel file or paste data to get started.")
+        st.info("👈 Upload a CSV or paste data to get started.")
         
         # Show footnotes reference table
         with st.expander("📚 Available Footnotes Reference"):
