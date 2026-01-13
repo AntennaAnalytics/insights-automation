@@ -305,7 +305,7 @@ def write_to_template(df, template_path, data_pull_name="", selected_footnotes=N
         ws.cell(row=CELL_USER_INPUT[0], column=CELL_USER_INPUT[1]).value = data_pull_name
         
         # B2: Services
-        ws.cell(row=CELL_SERVICES[0], column=CELL_SERVICES[1]).value = extract_unique_values(df, ["service", "services"])
+        ws.cell(row=CELL_SERVICES[0], column=CELL_SERVICES[1]).value = extract_unique_values(df, [col for col in df.columns if "service" in col.lower()])
         
         # B3: Distributors
         ws.cell(row=CELL_DISTRIBUTORS[0], column=CELL_DISTRIBUTORS[1]).value = extract_unique_values(df, [col for col in df.columns if "distributor" in col.lower()])
@@ -492,7 +492,7 @@ def main():
             display_data_preview(df, df_transformed)
             display_data_summary(df)
                         # Show detected services and distributors
-            services = extract_unique_values(df, ["service", "services"])
+            services = extract_unique_values(df, [col for col in df.columns if "service" in col.lower()])
             distributors = extract_unique_values(df, [col for col in df.columns if "distributor" in col.lower()])
             
             if services or distributors:
